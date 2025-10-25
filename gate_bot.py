@@ -145,14 +145,25 @@ async def handle_thank(callback: types.CallbackQuery):
         await callback.answer("Заявка уже закрыта.")
         return
 
+    user_id = task["user_id"]
     user_name = task["user_name"]
     direction = task["direction"]
+    operator_name = task.get("operator_name", "оператор")
 
-    # Удаляем сообщение клиента с "Спасибо"
-    await callback.message.delete()
-    await callback.answer("Спасибо отправлено 👏")
+    # Убираем сообщение с кнопкой Спасибо
+    try:
+        await callback.message.delete()
+    except:
+        pass
 
-    # Операторам — уведомление
+    # Отправляем главное меню клиенту
+    await bot.send_message(
+        user_id,
+        f"[КЛИЕНТ] Заявка на {direction} выполнена @{operator_name}",
+        reply_markup=main_kb  # Главное меню с кнопками
+    )
+
+    # Отправляем уведомление оператору о благодарности
     for op_id in OPERATORS:
         try:
             await bot.send_message(
@@ -161,6 +172,9 @@ async def handle_thank(callback: types.CallbackQuery):
             )
         except:
             pass
+
+    # Подтверждаем пользователю, что обратная связь отправлена
+    await callback.answer("Обратная связь отправлена.")
 
 async def main():
     print("🚀 Бот запущен. Ожидаем события...")
