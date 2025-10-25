@@ -1,0 +1,16 @@
+# created by virtualenv automatically
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+env/
+venv/
+Lib/
+Scripts/
+*.env
+
+# PyCharm
+.idea/
+*.iml
+
