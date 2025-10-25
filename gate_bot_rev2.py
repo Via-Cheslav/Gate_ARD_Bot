@@ -4,10 +4,8 @@ import uuid
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.types import (
-    ReplyKeyboardMarkup,
-    KeyboardButton,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup
+    ReplyKeyboardMarkup, KeyboardButton,
+    InlineKeyboardButton, InlineKeyboardMarkup
 )
 from dotenv import load_dotenv
 
@@ -19,20 +17,18 @@ ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
-
-# Список активных заявок
 tasks = {}
 
-# === Основная клавиатура (для всех пользователей) ===
+# === Основная клавиатура клиента ===
 main_kb = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="Прошу открыть въезд 🚗")],
-        [KeyboardButton(text="🚗 Прошу открыть выезд")],
+        [KeyboardButton(text="🚗 Прошу открыть выезд")]
     ],
     resize_keyboard=True
 )
 
-# === /start ===
+# === Команда /start ===
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     await message.answer(
@@ -40,29 +36,28 @@ async def cmd_start(message: types.Message):
         reply_markup=main_kb
     )
 
-# === /id ===
+# === Команда /id ===
 @dp.message(Command("id"))
 async def get_id(message: types.Message):
     await message.answer(f"Ваш Telegram ID: {message.from_user.id}")
 
-# === /help ===
+# === Команда /help ===
 @dp.message(Command("help"))
-async def help_command(message: types.Message):
-    help_text = (
-        "🤖 Этот бот помогает управлять воротами:\n\n"
-        "🚗 *Клиент*:\n"
-        "— Нажмите «Прошу открыть въезд» или «Прошу открыть выезд».\n"
-        "— Дождитесь, пока оператор откроет ворота.\n"
-        "— После выполнения нажмите «Спасибо».\n\n"
-        "🔧 *Оператор*:\n"
-        "— Получает уведомления о заявках.\n"
-        "— Может нажать «Сделано» или «Игнорировать».\n\n"
-        "🆔 /id — показать ваш Telegram ID.\n"
-        "ℹ️ После «Спасибо» бот вернёт меню."
+async def cmd_help(message: types.Message):
+    text = (
+        "📘 <b>Справка по управлению воротами</b>\n\n"
+        "🔹 <b>Прошу открыть въезд 🚗</b> — отправляет запрос операторам открыть ворота для въезда.\n"
+        "🔹 <b>🚗 Прошу открыть выезд</b> — запрос на открытие ворот для выезда.\n\n"
+        "🔹 После нажатия оператор получает уведомление и нажимает «Сделано».\n"
+        "🔹 Когда ворота открыты, вы получите сообщение с кнопкой «👍 Спасибо».\n"
+        "🔹 После «Спасибо» оператору приходит уведомление о благодарности 👏.\n\n"
+        "📍 Дополнительные команды:\n"
+        "/id — показать ваш Telegram ID\n"
+        "/start — перезапуск меню\n"
     )
-    await message.answer(help_text, reply_markup=main_kb, parse_mode="Markdown")
+    await message.answer(text, parse_mode="HTML", reply_markup=main_kb)
 
-# === Запрос от клиента ===
+# === Обработка запросов клиента ===
 @dp.message(F.text.in_(["Прошу открыть въезд 🚗", "🚗 Прошу открыть выезд"]))
 async def handle_request(message: types.Message):
     direction = "въезд" if "въезд" in message.text else "выезд"
@@ -70,13 +65,12 @@ async def handle_request(message: types.Message):
     user_name = message.from_user.username or message.from_user.first_name
     task_id = str(uuid.uuid4())
 
-    # Сообщение клиенту
+    # Клиенту
     user_msg = await message.answer(
-        "[КЛИЕНТ] Заявка направлена операторам. Ждите...",
+        f"[КЛИЕНТ] Заявка направлена операторам. Ожидайте ⏳",
         reply_markup=main_kb
     )
 
-    # Сохраняем заявку
     tasks[task_id] = {
         "user_id": user_id,
         "user_name": user_name,
@@ -84,15 +78,13 @@ async def handle_request(message: types.Message):
         "user_msg_id": user_msg.message_id
     }
 
-    # Отправляем сообщение операторам
+    # Операторам
     for op_id in OPERATORS:
         try:
-            kb = InlineKeyboardMarkup(inline_keyboard=[
-                [
-                    InlineKeyboardButton(text="✅ Сделано", callback_data=f"done:{task_id}"),
-                    InlineKeyboardButton(text="🚫 Игнорировать", callback_data=f"ignore:{task_id}")
-                ]
-            ])
+            kb = InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="✅ Сделано", callback_data=f"done:{task_id}"),
+                InlineKeyboardButton(text="❌ Игнорировать", callback_data=f"ignore:{task_id}")
+            ]])
             await bot.send_message(
                 int(op_id),
                 f"[ОПЕРАТОР] @{user_name} просит открыть {direction}",
@@ -114,8 +106,9 @@ async def handle_operator_action(callback: types.CallbackQuery):
     user_name = task["user_name"]
     direction = task["direction"]
     operator_name = callback.from_user.username or callback.from_user.first_name
+    task["operator_name"] = operator_name
 
-    # Удаляем сообщение клиента
+    # Удаляем сообщение клиента с "Ожидайте"
     user_msg_id = task.get("user_msg_id")
     if user_msg_id:
         try:
@@ -124,27 +117,16 @@ async def handle_operator_action(callback: types.CallbackQuery):
             pass
 
     if action == "ignore":
-        # Сообщение оператору
-        await callback.message.edit_text(
-            f"[ОПЕРАТОР] Заявка от @{user_name} на {direction} была проигнорирована.",
-            reply_markup=None
-        )
-        # Возвращаем клавиатуру
-        await callback.message.answer(
-            "Вы можете принять новый запрос:",
-            reply_markup=main_kb
-        )
+        await callback.message.edit_text(f"[ОПЕРАТОР] Заявка от @{user_name} на {direction} была проигнорирована.")
         tasks.pop(task_id, None)
         return
 
-    # “Сделано”
+    # Сообщение оператору
     await callback.message.edit_text(
-        f"[ОПЕРАТОР] Заявка для @{user_name} на {direction} выполнена",
-        reply_markup=None
+        f"[ОПЕРАТОР] Заявка для @{user_name} на {direction} выполнена."
     )
-    task["operator_name"] = operator_name
 
-    # Сообщение клиенту
+    # Клиенту
     thank_kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="👍 Спасибо", callback_data=f"thank:{task_id}")]
     ])
@@ -154,7 +136,7 @@ async def handle_operator_action(callback: types.CallbackQuery):
         reply_markup=thank_kb
     )
 
-# === Спасибо от клиента ===
+# === Обработка кнопки "Спасибо" ===
 @dp.callback_query(F.data.startswith("thank:"))
 async def handle_thank(callback: types.CallbackQuery):
     task_id = callback.data.split(":")[1]
@@ -168,29 +150,32 @@ async def handle_thank(callback: types.CallbackQuery):
     direction = task["direction"]
     operator_name = task.get("operator_name", "оператор")
 
-    # Удаляем сообщение клиента
-    await callback.message.delete()
-    await callback.answer("Спасибо передано оператору!")
+    # Убираем сообщение с кнопкой Спасибо
+    try:
+        await callback.message.delete()
+    except:
+        pass
 
-    # Клиенту: уведомление и возврат меню
+    # Отправляем главное меню клиенту
     await bot.send_message(
         user_id,
         f"[КЛИЕНТ] Заявка на {direction} выполнена @{operator_name}",
-        reply_markup=main_kb
+        reply_markup=main_kb  # Главное меню с кнопками
     )
 
-    # Оператору: благодарность и возврат меню
+    # Отправляем уведомление оператору о благодарности
     for op_id in OPERATORS:
         try:
             await bot.send_message(
                 int(op_id),
-                f"[ОПЕРАТОР] 👏 Спасибо за {direction} от @{user_name}",
-                reply_markup=main_kb
+                f"[ОПЕРАТОР] 👏 Спасибо за {direction} от @{user_name}"
             )
         except:
             pass
 
-# === Запуск ===
+    # Подтверждаем пользователю, что обратная связь отправлена
+    await callback.answer("Обратная связь отправлена.")
+
 async def main():
     print("🚀 Бот запущен. Ожидаем события...")
     await dp.start_polling(bot, skip_updates=True)
