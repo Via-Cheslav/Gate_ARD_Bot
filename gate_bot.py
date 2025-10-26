@@ -1,14 +1,10 @@
+# UPDATE_LOGGING_v2
 import asyncio
 import os
 import uuid
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
-from aiogram.types import (
-    ReplyKeyboardMarkup,
-    KeyboardButton,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup
-)
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
 from dotenv import load_dotenv
 
 # === Загрузка переменных окружения ===
@@ -18,51 +14,49 @@ OPERATORS = os.getenv("OPERATORS", "").split(",") if os.getenv("OPERATORS") else
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 
 bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
+dp = Dispatcher(bot=bot)
 
-# Список активных заявок
 tasks = {}
 
-# === Основная клавиатура (для всех пользователей) ===
+# === Функция логирования ===
+def log(msg):
+    print(f"[LOG] {msg}")
+
+# === Общая клавиатура (для клиента и оператора) с машинкой 🚗 ===
 main_kb = ReplyKeyboardMarkup(
     keyboard=[
-        [KeyboardButton(text="Прошу открыть въезд 🚗")],
-        [KeyboardButton(text="🚗 Прошу открыть выезд")],
+        [KeyboardButton(text="Прошу открыть въезд 🚗")],   # машинка слева
+        [KeyboardButton(text="🚗 Прошу открыть выезд")],   # машинка справа
     ],
     resize_keyboard=True
 )
 
-# === /start ===
+# === Команда старт ===
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
+    log(f"Старт от {message.from_user.username or message.from_user.first_name}")
     await message.answer(
         "Привет! Выберите действие:",
         reply_markup=main_kb
     )
 
-# === /id ===
+# === Команда /id для теста ===
 @dp.message(Command("id"))
 async def get_id(message: types.Message):
     await message.answer(f"Ваш Telegram ID: {message.from_user.id}")
+    log(f"Запрос ID от {message.from_user.username or message.from_user.first_name}")
 
-# === /help ===
+# === Команда /help ===
 @dp.message(Command("help"))
-async def help_command(message: types.Message):
-    help_text = (
-        "🤖 Этот бот помогает управлять воротами:\n\n"
-        "🚗 *Клиент*:\n"
-        "— Нажмите «Прошу открыть въезд» или «Прошу открыть выезд».\n"
-        "— Дождитесь, пока оператор откроет ворота.\n"
-        "— После выполнения нажмите «Спасибо».\n\n"
-        "🔧 *Оператор*:\n"
-        "— Получает уведомления о заявках.\n"
-        "— Может нажать «Сделано» или «Игнорировать».\n\n"
-        "🆔 /id — показать ваш Telegram ID.\n"
-        "ℹ️ После «Спасибо» бот вернёт меню."
-    )
-    await message.answer(help_text, reply_markup=main_kb, parse_mode="Markdown")
+async def cmd_help(message: types.Message):
+    text = ("Использование бота:\n"
+            "1. Ворота: Выберите 'Прошу открыть въезд/выезд'\n"
+            "2. Оператор: Нажмите 'Сделано' или 'Игнорировать'\n"
+            "3. Клиент: Нажмите 'Спасибо' после открытия")
+    await message.answer(text)
+    log(f"Запрос помощи от {message.from_user.username or message.from_user.first_name}")
 
-# === Запрос от клиента ===
+# === Обработка запроса на открытие ворот ===
 @dp.message(F.text.in_(["Прошу открыть въезд 🚗", "🚗 Прошу открыть выезд"]))
 async def handle_request(message: types.Message):
     direction = "въезд" if "въезд" in message.text else "выезд"
@@ -70,36 +64,42 @@ async def handle_request(message: types.Message):
     user_name = message.from_user.username or message.from_user.first_name
     task_id = str(uuid.uuid4())
 
-    # Сообщение клиенту
-    user_msg = await message.answer(
-        "[КЛИЕНТ] Заявка направлена операторам. Ждите...",
-        reply_markup=main_kb
-    )
+    # Клиенту: уведомление о запросе
+    user_msg = await message.answer(f"- Заявка направлена операторам. Ждите", reply_markup=main_kb)
+    log(f"Заявка {task_id} создана от {user_name} на {direction}")
 
-    # Сохраняем заявку
     tasks[task_id] = {
         "user_id": user_id,
         "user_name": user_name,
         "direction": direction,
-        "user_msg_id": user_msg.message_id
+        "user_msg_id": user_msg.message_id,
+        "operator_msg_ids": []
     }
 
-    # Отправляем сообщение операторам
+    # Операторам: уведомление + те же кнопки что у клиента
     for op_id in OPERATORS:
         try:
             kb = InlineKeyboardMarkup(inline_keyboard=[
                 [
-                    InlineKeyboardButton(text="✅ Сделано", callback_data=f"done:{task_id}"),
-                    InlineKeyboardButton(text="🚫 Игнорировать", callback_data=f"ignore:{task_id}")
+                    InlineKeyboardButton(text="Сделано", callback_data=f"done:{task_id}"),
+                    InlineKeyboardButton(text="Игнорировать", callback_data=f"ignore:{task_id}")
                 ]
             ])
-            await bot.send_message(
+            op_msg = await bot.send_message(
                 int(op_id),
-                f"[ОПЕРАТОР] @{user_name} просит открыть {direction}",
+                f"> @{user_name} просит открыть {direction}",
                 reply_markup=kb
             )
+            tasks[task_id]["operator_msg_ids"].append(op_msg.message_id)
+            log(f"Уведомление оператору {op_id}, task_id={task_id}")
+            # Отправляем оператору те же кнопки, что клиенту
+            await bot.send_message(
+                int(op_id),
+                "Выберите действие:",
+                reply_markup=main_kb
+            )
         except Exception as e:
-            print(f"[Ошибка уведомления оператору {op_id}]: {e}")
+            log(f"Ошибка уведомления оператору {op_id}: {e}")
 
 # === Действия оператора ===
 @dp.callback_query(F.data.startswith(("done:", "ignore:")))
@@ -108,6 +108,7 @@ async def handle_operator_action(callback: types.CallbackQuery):
     task = tasks.get(task_id)
     if not task:
         await callback.answer("Заявка уже закрыта или не найдена.")
+        log(f"Оператор нажал {action}, но task {task_id} не найден")
         return
 
     user_id = task["user_id"]
@@ -115,85 +116,79 @@ async def handle_operator_action(callback: types.CallbackQuery):
     direction = task["direction"]
     operator_name = callback.from_user.username or callback.from_user.first_name
 
-    # Удаляем сообщение клиента
+    # Удаляем сообщение запроса пользователя
     user_msg_id = task.get("user_msg_id")
     if user_msg_id:
         try:
             await bot.delete_message(chat_id=user_id, message_id=user_msg_id)
+            log(f"Удалено сообщение пользователя {user_name} task {task_id}")
         except:
             pass
 
     if action == "ignore":
-        # Сообщение оператору
-        await callback.message.edit_text(
-            f"[ОПЕРАТОР] Заявка от @{user_name} на {direction} была проигнорирована.",
-            reply_markup=None
-        )
-        # Возвращаем клавиатуру
-        await callback.message.answer(
-            "Вы можете принять новый запрос:",
-            reply_markup=main_kb
-        )
-        tasks.pop(task_id, None)
+        # Изменяем сообщение оператора и возвращаем кнопки
+        await callback.message.edit_text(f"> Заявка на {direction} проигнорирована")
+        await callback.message.answer("Выберите действие:", reply_markup=main_kb)
+        log(f"Оператор {operator_name} проигнорировал task {task_id}")
         return
 
-    # “Сделано”
-    await callback.message.edit_text(
-        f"[ОПЕРАТОР] Заявка для @{user_name} на {direction} выполнена",
-        reply_markup=None
-    )
-    task["operator_name"] = operator_name
+    # Действие “Сделано”
+    await callback.message.edit_text(f"> Заявка для @{user_name} на {direction} выполнена")
+    log(f"Оператор {operator_name} выполнил task {task_id}")
 
-    # Сообщение клиенту
+    # Клиенту: уведомление с кнопкой “Спасибо”
     thank_kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="👍 Спасибо", callback_data=f"thank:{task_id}")]
     ])
     await bot.send_message(
         user_id,
-        f"[КЛИЕНТ] Ворота {direction} открыты оператором @{operator_name}",
+        f"- Ворота {direction} открыты оператором @{operator_name}",
         reply_markup=thank_kb
     )
+    log(f"Сообщение клиенту {user_name} с кнопкой Спасибо, task {task_id}")
 
-# === Спасибо от клиента ===
+# === Клиент нажал Спасибо ===
 @dp.callback_query(F.data.startswith("thank:"))
 async def handle_thank(callback: types.CallbackQuery):
     task_id = callback.data.split(":")[1]
     task = tasks.pop(task_id, None)
     if not task:
         await callback.answer("Заявка уже закрыта.")
+        log(f"Нажата Спасибо для уже закрытой заявки task {task_id}")
         return
 
     user_id = task["user_id"]
     user_name = task["user_name"]
     direction = task["direction"]
-    operator_name = task.get("operator_name", "оператор")
+    operator_name = callback.from_user.username or "оператор"
 
-    # Удаляем сообщение клиента
+    # Убираем сообщение с кнопкой
     await callback.message.delete()
-    await callback.answer("Спасибо передано оператору!")
+    await callback.answer("Обратная связь отправлена.")
+    log(f"Клиент {user_name} нажал Спасибо, task {task_id}")
 
-    # Клиенту: уведомление и возврат меню
+    # Клиенту: короткое уведомление + главное меню
     await bot.send_message(
         user_id,
-        f"[КЛИЕНТ] Заявка на {direction} выполнена @{operator_name}",
+        f"- Заявка на {direction} выполнена @{operator_name}",
         reply_markup=main_kb
     )
 
-    # Оператору: благодарность и возврат меню
+    # Операторам: уведомление о благодарности с эмодзи 👏
     for op_id in OPERATORS:
         try:
             await bot.send_message(
                 int(op_id),
-                f"[ОПЕРАТОР] 👏 Спасибо за {direction} от @{user_name}",
-                reply_markup=main_kb
+                f"> 👏 Спасибо за {direction} от @{user_name}"
             )
+            log(f"Отправлено спасибо оператору {op_id} за task {task_id}")
         except:
-            pass
+            log(f"Ошибка отправки спасибо оператору {op_id} за task {task_id}")
 
-# === Запуск ===
+# === Основной запуск бота ===
 async def main():
-    print("🚀 Бот запущен. Ожидаем события...")
-    await dp.start_polling(bot, skip_updates=True)
+    log("🚀 Бот запущен. Ожидаем события...")
+    await dp.start_polling(skip_updates=True)
 
 if __name__ == "__main__":
     asyncio.run(main())
