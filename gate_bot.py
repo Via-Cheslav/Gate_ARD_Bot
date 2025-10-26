@@ -40,7 +40,7 @@ async def cmd_start(message: types.Message):
         reply_markup=main_kb
     )
 
-# === Команда /id для теста ===
+# === Команда /id  для теста ===
 @dp.message(Command("id"))
 async def get_id(message: types.Message):
     await message.answer(f"Ваш Telegram ID: {message.from_user.id}")
